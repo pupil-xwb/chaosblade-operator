@@ -35,6 +35,8 @@ rules:
       - pods/exec
       - configmaps
       - services
+      - persistentvolumeclaims
+      - persistentvolumes
     verbs:
       - "*"
   - apiGroups:

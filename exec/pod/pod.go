@@ -224,6 +224,14 @@ blade create k8s pod-script delay --time 10000 --file test.sh --function-name st
 				action.SetExample(`
 # Add commands to the script "start0() { echo this-is-error-message; exit 1; ... }"
 blade create k8s pod-script exit --exit-code 1 --exit-message this-is-error-message --file test.sh --function-name start0 --names nginx-app --kubeconfig ~/.kube/config --namespace default`)
+			case *PodContainerCreatingActionSpec:
+				action.SetLongDesc("Make pod stuck in ContainerCreating state by creating a PV with an unreachable NFS server, a PVC bound to it, and a Pod that mounts the PVC. Since the NFS server is unreachable, the volume mount fails and the Pod remains stuck in ContainerCreating state.")
+				action.SetExample(
+					`# Create a pod stuck in ContainerCreating state in the default namespace
+blade create k8s pod-pod containercreating --namespace default --kubeconfig ~/.kube/config
+
+# Create a pod stuck in ContainerCreating state with custom volume mount path
+blade create k8s pod-pod containercreating --namespace default --volume-mount-path /data --kubeconfig ~/.kube/config`)
 			default:
 				action.SetExample(strings.Replace(action.Example(),
 					fmt.Sprintf("blade create %s %s", expModelSpec.Name(), action.Name()),
@@ -261,6 +269,7 @@ func NewSelfExpModelCommandSpec(client *channel.Client) spec.ExpModelCommandSpec
 				NewPodIOActionSpec(client),
 				NewFailPodActionSpec(client),
 				NewPodTerminatingActionSpec(client),
+				NewPodContainerCreatingActionSpec(client),
 			},
 		},
 	}
