@@ -270,6 +270,7 @@ func NewSelfExpModelCommandSpec(client *channel.Client) spec.ExpModelCommandSpec
 				NewFailPodActionSpec(client),
 				NewPodTerminatingActionSpec(client),
 				NewPodContainerCreatingActionSpec(client),
+				NewImageConfigActionSpec(client),
 			},
 		},
 	}
