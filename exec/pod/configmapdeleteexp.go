@@ -160,19 +160,19 @@ func (d *ConfigMapDeleteActionExecutor) create(ctx context.Context, expModel *sp
 
 		cmKey := fmt.Sprintf("%s/%s", c.Namespace, resolvedCMName)
 
-		// Step 3: Fetch the original ConfigMap
-		originalCM := &v1.ConfigMap{}
-		if err := d.client.Get(ctx, types.NamespacedName{Name: resolvedCMName, Namespace: c.Namespace}, originalCM); err != nil {
-			logrusField.Errorf("get configmap %s/%s failed: %v", c.Namespace, resolvedCMName, err)
-			status = status.CreateFailResourceStatus(
-				fmt.Sprintf("configmap %s not found in namespace %s", resolvedCMName, c.Namespace), spec.K8sExecFailed.Code)
-			statuses = append(statuses, status)
-			continue
-		}
-
-		// Step 4: Deduplicate — only backup & delete each ConfigMap once
+		// Step 3: Deduplicate — only backup & delete each ConfigMap once
 		if !processedCMs[cmKey] {
+			// Step 4: Fetch the original ConfigMap
+			originalCM := &v1.ConfigMap{}
+			if err := d.client.Get(ctx, types.NamespacedName{Name: resolvedCMName, Namespace: c.Namespace}, originalCM); err != nil {
+				logrusField.Errorf("get configmap %s/%s failed: %v", c.Namespace, resolvedCMName, err)
+				status = status.CreateFailResourceStatus(
+					fmt.Sprintf("configmap %s not found in namespace %s", resolvedCMName, c.Namespace), spec.K8sExecFailed.Code)
+				statuses = append(statuses, status)
+				continue
+			}
 			// Step 5: Create backup ConfigMap
+			// (originalCM is declared inside the dedup block above)
 			if err := d.createBackupConfigMap(ctx, experimentId, originalCM); err != nil {
 				logrusField.Errorf("create backup configmap for %s/%s failed: %v", c.Namespace, resolvedCMName, err)
 				status = status.CreateFailResourceStatus(
@@ -353,12 +353,16 @@ func (d *ConfigMapDeleteActionExecutor) createBackupConfigMap(ctx context.Contex
 
 	// Preserve original labels and annotations as JSON
 	if len(originalCM.Labels) > 0 {
-		if labelsJSON, err := json.Marshal(originalCM.Labels); err == nil {
+		if labelsJSON, err := json.Marshal(originalCM.Labels); err != nil {
+			logrus.Warningf("failed to marshal original labels for configmap %s/%s: %v", originalCM.Namespace, originalCM.Name, err)
+		} else {
 			annotations[ChaosBladeOriginalLabelsAnn] = string(labelsJSON)
 		}
 	}
 	if len(originalCM.Annotations) > 0 {
-		if annsJSON, err := json.Marshal(originalCM.Annotations); err == nil {
+		if annsJSON, err := json.Marshal(originalCM.Annotations); err != nil {
+			logrus.Warningf("failed to marshal original annotations for configmap %s/%s: %v", originalCM.Namespace, originalCM.Name, err)
+		} else {
 			annotations[ChaosBladeOriginalAnnsAnn] = string(annsJSON)
 		}
 	}
@@ -400,12 +404,16 @@ func (d *ConfigMapDeleteActionExecutor) restoreConfigMapFromBackup(ctx context.C
 	// Restore original labels
 	var originalLabels map[string]string
 	if labelsJSON := backupCM.Annotations[ChaosBladeOriginalLabelsAnn]; labelsJSON != "" {
-		_ = json.Unmarshal([]byte(labelsJSON), &originalLabels)
+		if err := json.Unmarshal([]byte(labelsJSON), &originalLabels); err != nil {
+			logrus.Warningf("failed to unmarshal original labels from backup %s/%s: %v", backupCM.Namespace, backupCM.Name, err)
+		}
 	}
 	// Restore original annotations
 	var originalAnnotations map[string]string
 	if annsJSON := backupCM.Annotations[ChaosBladeOriginalAnnsAnn]; annsJSON != "" {
-		_ = json.Unmarshal([]byte(annsJSON), &originalAnnotations)
+		if err := json.Unmarshal([]byte(annsJSON), &originalAnnotations); err != nil {
+			logrus.Warningf("failed to unmarshal original annotations from backup %s/%s: %v", backupCM.Namespace, backupCM.Name, err)
+		}
 	}
 
 	restoredCM := &v1.ConfigMap{
@@ -484,7 +492,9 @@ func collectConfigMapReferences(pod *v1.Pod) []ConfigMapRef {
 	}
 
 	// Scan all containers (regular + init)
-	allContainers := append(pod.Spec.Containers, pod.Spec.InitContainers...)
+	allContainers := make([]v1.Container, 0, len(pod.Spec.Containers)+len(pod.Spec.InitContainers))
+	allContainers = append(allContainers, pod.Spec.Containers...)
+	allContainers = append(allContainers, pod.Spec.InitContainers...)
 	for _, ctr := range allContainers {
 		for _, envFrom := range ctr.EnvFrom {
 			if envFrom.ConfigMapRef != nil {
@@ -540,7 +550,7 @@ func isOptional(opt *bool) bool {
 // getBackupConfigMapName generates a deterministic backup name from experiment ID and ConfigMap identity.
 // The experimentId is truncated to 8 chars to keep names short; the full ID is stored in labels for querying.
 func getBackupConfigMapName(experimentId, namespace, cmName string) string {
-	hash := sha256.Sum256([]byte(fmt.Sprintf("%s/%s", namespace, cmName)))
+	hash := sha256.Sum256([]byte(fmt.Sprintf("%s/%s/%s", experimentId, namespace, cmName)))
 	hashStr := fmt.Sprintf("%x", hash[:4])
 
 	expIdPrefix := experimentId

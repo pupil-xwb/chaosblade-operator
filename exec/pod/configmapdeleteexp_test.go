@@ -445,7 +445,7 @@ func TestResolveTargetConfigMap(t *testing.T) {
 				if err == nil {
 					t.Fatalf("resolveTargetConfigMap() returned nil error, want error containing %q", tt.wantErr)
 				}
-				if !contains(err.Error(), tt.wantErr) {
+				if !strings.Contains(err.Error(), tt.wantErr) {
 					t.Errorf("resolveTargetConfigMap() error = %q, want to contain %q", err.Error(), tt.wantErr)
 				}
 				return
@@ -564,20 +564,6 @@ func TestIsOptional(t *testing.T) {
 			}
 		})
 	}
-}
-
-// contains checks if s contains substr (simple helper to avoid importing strings).
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestCopyStringMap(t *testing.T) {
