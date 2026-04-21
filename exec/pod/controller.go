@@ -18,8 +18,6 @@ package pod
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"github.com/chaosblade-io/chaosblade-exec-cri/exec/container"
 	"github.com/chaosblade-io/chaosblade-spec-go/spec"
@@ -54,28 +52,21 @@ func (e *ExpController) Create(ctx context.Context, expSpec v1alpha1.ExperimentS
 	experimentId := model.GetExperimentIdFromContext(ctx)
 	logrusField := logrus.WithField("experiment", experimentId)
 
-	// containercreating action creates new resources (PV+PVC+Pod) and does not require
-	// finding existing pods. It only needs the namespace to know where to create them.
-	if expModel.ActionName == "containercreating" {
-		// Validate namespace: must be specified and only one value
-		namespace := expModel.ActionFlags[model.ResourceNamespaceFlag.Name]
-		if namespace == "" {
-			return spec.ResponseFailWithFlags(spec.ParameterLess, model.ResourceNamespaceFlag.Name)
+	// Get action spec to check if it implements ActionPreProcessor
+	actionSpec := e.ResourceModelSpec.GetExpActionModelSpec(expModel.Target, expModel.ActionName)
+	if actionSpec != nil {
+		if preProcessor, ok := actionSpec.(model.ActionPreProcessor); ok {
+			newCtx, resp := preProcessor.PreCreate(ctx, expModel, e.Client)
+			if resp != nil {
+				return resp
+			}
+			ctx = newCtx
+			logrusField.Infof("creating %s experiment with pre-processing", expModel.ActionName)
+			return e.Exec(ctx, expModel)
 		}
-		if strings.Contains(namespace, ",") {
-			return spec.ResponseFailWithFlags(spec.ParameterInvalidNSNotOne, model.ResourceNamespaceFlag.Name)
-		}
-		containerObjectMetaList := model.ContainerMatchedList{
-			model.ContainerObjectMeta{
-				Namespace: namespace,
-				PodName:   fmt.Sprintf("chaosblade-cc-%s-pod", experimentId),
-			},
-		}
-		logrusField.Infof("creating containercreating experiment in namespace %s", namespace)
-		ctx = model.SetContainerObjectMetaListToContext(ctx, containerObjectMetaList)
-		return e.Exec(ctx, expModel)
 	}
 
+	// Default flow: find matched pods and execute
 	pods, resp := e.GetMatchedPodResources(ctx, *expModel)
 	if !resp.Success {
 		logrusField.Errorf("uid: %s, get matched pod experiment failed, %v", experimentId, resp.Err)
@@ -93,10 +84,26 @@ func (e *ExpController) Create(ctx context.Context, expSpec v1alpha1.ExperimentS
 }
 
 func (e *ExpController) Destroy(ctx context.Context, expSpec v1alpha1.ExperimentSpec, oldExpStatus v1alpha1.ExperimentStatus) *spec.Response {
-	logrus.WithField("experiment", model.GetExperimentIdFromContext(ctx)).Infoln("start to destroy")
 	expModel := model.ExtractExpModelFromExperimentSpec(expSpec)
+	experimentId := model.GetExperimentIdFromContext(ctx)
+	logrus.WithField("experiment", experimentId).Infoln("start to destroy")
+
+	// Check if action implements ActionPreProcessor - use the same path as Create
+	actionSpec := e.ResourceModelSpec.GetExpActionModelSpec(expModel.Target, expModel.ActionName)
+	if actionSpec != nil {
+		if preProcessor, ok := actionSpec.(model.ActionPreProcessor); ok {
+			newCtx, resp := preProcessor.PreDestroy(ctx, expModel, e.Client, oldExpStatus)
+			if resp != nil {
+				return resp
+			}
+			ctx = newCtx
+			return e.Exec(ctx, expModel)
+		}
+	}
+
+	// Default flow: find matched containers and destroy
 	statuses := oldExpStatus.ResStatuses
-	if statuses == nil {
+	if len(statuses) == 0 {
 		return spec.ReturnSuccess(v1alpha1.CreateSuccessExperimentStatus([]v1alpha1.ResourceStatus{}))
 	}
 	containerObjectMetaList := model.ContainerMatchedList{}
@@ -107,6 +114,9 @@ func (e *ExpController) Destroy(ctx context.Context, expSpec v1alpha1.Experiment
 		containerObjectMeta := model.ParseIdentifier(status.Identifier)
 		containerObjectMeta.Id = status.Id
 		containerObjectMetaList = append(containerObjectMetaList, containerObjectMeta)
+	}
+	if len(containerObjectMetaList) == 0 {
+		return spec.ReturnSuccess(v1alpha1.CreateSuccessExperimentStatus([]v1alpha1.ResourceStatus{}))
 	}
 	ctx = model.SetContainerObjectMetaListToContext(ctx, containerObjectMetaList)
 	return e.Exec(ctx, expModel)

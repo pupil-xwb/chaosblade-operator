@@ -53,6 +53,7 @@ rules:
     resources:
       - daemonsets
       - deployments
+      - statefulsets
     verbs:
       - "*"
   - apiGroups:
