@@ -361,7 +361,7 @@ blade create k8s node-file move --filepath /home/logs/nginx.log --target /tmp --
 blade create k8s node-file move --filepath /home/logs/nginx.log --target /temp --auto-create-dir --names nginx-app --container-ids f1de335b4eeaf --kubeconfig ~/.kube/config --namespace default
 `)
 			case *file.FileFdleakActionCommandSpec:
-				action.SetLongDesc("The file descriptor leak experiment scenario in the node, which causes disk load to increase")
+				action.SetLongDesc("The file descriptor leak experiment scenario in the node, which causes disk space usage to increase")
 				action.SetExample(
 					`# Occupy about 50% of disk space with a leaked unlinked file in the node
 ## using SSH channel
